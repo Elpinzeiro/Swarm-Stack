@@ -1,8 +1,8 @@
 # Swarm-Stack Project
-This code allows you to deploy a Swarm Stack by simply running a few lines of code, thanks to the Infrastructure as Code paradigm.
+This code allows you to configure 3 ubuntu VMs and deploy on it a Swarm Stack by simply running a few lines of code, thanks to the Infrastructure as Code paradigm.
 The Swarm essentially contains 9 services:
 
-Registry: It is a storage and distribution system for named docker images. The same image might have multiple different versions, identified by their tags. It is configured in a separate file from docker-compose so that it can be deployed separately from other services
+Registry: It is a storage and distribution system for named docker images. The same image might have multiple different versions, identified by their tags. It is configured in a separate file from docker-compose so that it can be deployed separately from other services.
 
 Cms: It is a tool that helps build a website without having to write all the code from scratch. It Simulates the backend of the admin interface of a website.
 
