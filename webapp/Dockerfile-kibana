@@ -1,5 +1,4 @@
 FROM bitnami/kibana:latest
-#to import do: curl -X POST "localhost:5601/api/saved_objects/_import" -H "kbn-xsrf: true" --form file=@/export/export.ndjson
-#curl -X POST "https://mon.localdomain/api/saved_objects/_import" -k -H "kbn-xsrf: true" --form file=@./webapp/export.ndjson
+
 
 
