@@ -1,0 +1,31 @@
+FROM nginx:1.19.10
+RUN apt -y update
+RUN apt -y install bison flex make automake gcc pkg-config libtool doxygen git curl zlib1g-dev libxml2-dev libpcre3-dev build-essential libyajl-dev yajl-tools liblmdb-dev rdmacm-utils libgeoip-dev libcurl4-openssl-dev liblua5.2-dev libfuzzy-dev openssl libssl-dev
+
+WORKDIR /opt
+RUN git clone https://github.com/SpiderLabs/ModSecurity
+WORKDIR /opt/ModSecurity/
+RUN git checkout v3/master && git submodule init && git submodule update
+RUN sh build.sh
+RUN ./configure
+RUN make
+RUN make install
+WORKDIR /opt
+ADD http://nginx.org/download/nginx-1.19.10.tar.gz . 
+RUN tar -xf nginx-1.19.10.tar.gz
+RUN git clone https://github.com/SpiderLabs/ModSecurity-nginx
+WORKDIR /opt/nginx-1.19.10
+RUN ./configure --with-compat --add-dynamic-module=/opt/ModSecurity-nginx
+RUN make modules
+RUN cp objs/ngx_http_modsecurity_module.so /etc/nginx/modules/
+ADD /nginx-conf/nginx.conf /etc/nginx/nginx.conf
+ADD /nginx-conf/nginx-default.conf /etc/nginx/conf.d/default.conf
+RUN mkdir /etc/nginx/modsec
+WORKDIR /etc/nginx/modsec
+RUN git clone https://github.com/SpiderLabs/owasp-modsecurity-crs.git
+RUN mv /etc/nginx/modsec/owasp-modsecurity-crs/crs-setup.conf.example /etc/nginx/modsec/owasp-modsecurity-crs/crs-setup.conf
+RUN cp /opt/ModSecurity/modsecurity.conf-recommended /etc/nginx/modsec/modsecurity.conf
+ADD modsecurity.conf /etc/nginx/modsec/modsecurity.conf
+WORKDIR /etc/nginx/modsec/
+ADD /nginx-conf/main.conf /etc/nginx/modsec/
+RUN cp /opt/ModSecurity/unicode.mapping /etc/nginx/modsec

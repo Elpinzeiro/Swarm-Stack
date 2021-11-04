@@ -1,0 +1,165 @@
+---
+- hosts: all
+  any_errors_fatal: true
+  become: yes
+  roles:
+    # ansible-galaxy install mrlesmithjr.netplan
+    - role: mrlesmithjr.netplan
+      become: yes
+      # This role will do nothing unless netplan_enabled is true.
+      netplan_enabled: true
+      # The default is /etc/netplan/config.yaml.
+      netplan_config_file: /etc/netplan/00-installer-config.yaml
+      # Ubuntu 18.04, for example, defaults to using networkd.
+      netplan_renderer: networkd
+      # Simple network configuration to add a single network
+      # interface.
+      netplan_configuration:
+        network:
+          version: 2
+          ethernets:
+            ens33:
+             addresses:
+             - 192.168.153.{{id}}/24
+             gateway4: 192.168.153.2
+             nameservers:
+              #search: [unige.it]
+              addresses: [8.8.8.8, 8.8.4.4]
+            
+            ens38:
+              addresses:
+              - 192.168.255.{{id}}/24           
+
+            ens39:
+             addresses:
+             - 10.255.255.{{id}}/24
+              
+  tasks:
+  
+    - name: Set the hostname.
+      hostname:
+        name: "{{hostname}}"
+    - name: Install gluster
+      apt:            
+       state: present
+       name: [glusterfs-server, glusterfs-client] 
+       update_cache: yes
+    - name: Updating /etc/hosts    
+      blockinfile:
+       path: /etc/hosts
+       block: |
+         {{ item.ip }} {{ item.name }}
+       marker: "# {mark} ANSIBLE MANAGED BLOCK {{ item.name }}"
+      loop:
+       - { name: vm1 , ip: 192.168.255.11  }
+       - { name: vm2 , ip: 192.168.255.12  }
+       - { name: vm3 , ip: 192.168.255.13  }
+       - { name: vm1g , ip: 10.255.255.11  }
+       - { name: vm2g , ip: 10.255.255.12  }
+       - { name: vm3g , ip: 10.255.255.13  }
+    - name: Start Service
+      shell: systemctl start glusterd.service; systemctl enable glusterd.service; systemctl status glusterd.service
+
+    - name: Create a trusted storage pool
+      gluster.gluster.gluster_peer:
+       state: present
+       nodes:
+        - vm1g
+        - vm2g
+        - vm3g
+
+    - name: Create brick folders
+      ansible.builtin.file:
+       state: directory 
+       path: /bricks/{{id}} 
+  
+    - name: Mounting
+      mount:
+       state: present
+       path: /bricks/{{id}}
+       src: /dev/sdb
+       fstype: ext4
+    
+    - name: Create Mountpoint
+      ansible.builtin.file:
+       state: directory
+       path: /shared
+
+    - name: create gluster volume
+      become: yes
+      gluster.gluster.gluster_volume:
+       state: started
+       name: shared
+       replicas: 3
+       bricks: /bricks
+       #rebalance: yes
+       cluster:
+       - vm1g
+       - vm2g
+       - vm3g
+       force: true
+       start_on_create: yes 
+       #run_once: true
+  
+    - name: Mounting mountpoint
+      mount:
+       state: present
+       path: /shared
+       src: vm1g:shared
+       fstype: glusterfs
+      
+    - name: Install docker Swarm
+      apt:
+       name: [docker, docker-compose]
+       state: present
+    
+    - name: determine swarm status of manager
+      become: yes
+      shell: docker info | grep 'Swarm:' | cut -d ' ' -f3   
+      register: swarm_status
+      when: ansible_hostname == 'vm1'
+    - debug:
+       msg: "{{hostvars['192.168.255.11']['swarm_status']['stdout_lines']}}"  
+    
+    - name: Create Docker Swarm
+      become: yes
+      shell: docker swarm init --advertise-addr ens38 | grep 'join --token'| cut -d ' ' -f9
+      register: token
+      when: ansible_hostname == 'vm1' and 'active' not in swarm_status.stdout_lines
+
+    - name: determine swarm status of vm2
+      become: yes
+      shell: docker info | grep 'Swarm:' | cut -d ' ' -f3   
+      register: swarm_status
+      when: ansible_hostname == 'vm2'          
+  
+    - name: Joining vm2
+      become: yes
+      shell: docker swarm join --token {{hostvars['192.168.255.11']['token']['stdout']}} 192.168.255.11:2377
+      when: ansible_hostname == 'vm2' and 'active' not in swarm_status.stdout_lines
+      
+    - name: determine swarm status of vm3
+      become: yes
+      shell: docker info | grep 'Swarm:' | cut -d ' ' -f3   
+      register: swarm_status
+      when: ansible_hostname == 'vm3'          
+  
+    - name: Joining vm3
+      become: yes
+      shell: docker swarm join --token {{hostvars['192.168.255.11']['token']['stdout']}} 192.168.255.11:2377
+      when: ansible_hostname == 'vm3' and 'active' not in swarm_status.stdout_lines
+      
+   
+       
+    #- name: Add nodes
+    #  docker_swarm:
+    #  state: join
+    #  advertise_addr: vm1g
+    #  join_token: result.swarm_facts.JoinTokens.Worker
+    #  remote_addrs: "{{ manager_ip }}:2377"
+    #  when: ansible_hostname == 'vm2'
+#https://medium.com/@cantrobot/deploying-docker-swarm-with-ansible-a991c1028427
+#https://github.com/nextrevision/ansible-swarm-playbook/blob/master/swarm.yml
+#https://github.com/nextrevision/ansible-swarm-playbook
+      
+       

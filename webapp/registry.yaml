@@ -1,0 +1,13 @@
+version: '3.3'
+
+services:
+ registry:
+  image: registry:2
+  volumes:
+    - /shared/registry:/var/lib/registry
+  deploy:
+    placement:
+     constraints:
+      - node.role == manager
+  ports:
+    - 5000:5000

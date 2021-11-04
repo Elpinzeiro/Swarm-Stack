@@ -1,0 +1,13 @@
+FROM bitnami/logstash:latest
+
+RUN mkdir /opt/bitnami/logstash-modsecurity
+ADD logstash-modsecurity /opt/bitnami/logstash-modsecurity
+ 
+RUN cd /opt/bitnami/logstash-modsecurity; ./deploy.sh
+ 
+WORKDIR /opt/bitnami/logstash/config/
+ 
+# for debugging...
+RUN sed -i 's/]}"/]}" --log.level debug/g' /opt/bitnami/scripts/logstash/run.sh
+ 
+RUN ls -1 *.conf | grep "^[0-9]" | xargs cat > /bitnami/logstash/config/modsec_config.conf

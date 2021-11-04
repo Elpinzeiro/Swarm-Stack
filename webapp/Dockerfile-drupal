@@ -1,0 +1,49 @@
+FROM php:7.4-apache
+RUN apt update -y
+RUN a2enmod rewrite  
+RUN service apache2 restart
+RUN DEBIAN_FRONTEND=noninteractive apt -y install iputils-ping net-tools wait-for-it zip git mariadb-client
+RUN apt install -y libfreetype6-dev libjpeg62-turbo-dev libpng-dev
+RUN docker-php-ext-configure gd --with-freetype=/usr/include/ --with-jpeg=/usr/include/
+RUN docker-php-ext-install -j$(nproc) gd pdo pdo_mysql mysqli
+
+WORKDIR /var/www/html
+ADD https://ftp.drupal.org/files/projects/drupal-9.1.8.zip /var/www/html
+RUN unzip drupal-9.1.8.zip
+RUN mv drupal-9.1.8/* .
+RUN rm -f drupal-9.1.8.zip
+VOLUME /sites
+RUN mv sites sites.ORIG; ln -s /sites
+
+RUN apt-get install -y sudo
+ADD firstrun.sh /usr/local/bin/
+RUN chmod a+x /usr/local/bin/firstrun.sh
+RUN sudo mkdir /mysettings/
+ADD settings.php /mysettings/
+RUN sudo chmod 777 /mysettings/settings.php
+RUN sudo mkdir sites/default
+
+RUN apt-get install -y libzip-dev  zip
+RUN apt -y install unzip git
+RUN docker-php-ext-install zip  
+
+RUN php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');"
+RUN php composer-setup.php --install-dir=/usr/local/bin --filename=composer
+RUN composer require drush/drush
+RUN curl -OL https://github.com/drush-ops/drush-launcher/releases/download/0.6.0/drush.phar
+RUN chmod a+x drush.phar
+RUN mv drush.phar /usr/local/bin/drush
+
+
+
+WORKDIR /var/www/html
+RUN apt -y install mariadb-client
+
+
+ENTRYPOINT /usr/local/bin/firstrun.sh
+
+
+
+
+
+

@@ -1,0 +1,235 @@
+version: '3.3'
+
+services:
+  cms:
+    image: 127.0.0.1:5000/drupal
+    hostname: cms
+    logging:
+      driver: gelf
+      options:
+        gelf-address: "udp://0.0.0.0:12201"
+        tag: cms_logs
+    environment:
+      DB_URL: "mysql://drupal:drupal@mariadb:3306/drupal"
+      SITE_NAME: Example
+      ADMIN_PASS: drupal
+      MYSQL_ROOT_PASSWORD: drupal  
+      MYSQL_DATABASE: drupal   
+      MYSQL_USER: drupal   
+      MYSQL_PASSWORD: drupal
+    deploy:
+      mode: replicated
+      replicas: 1
+      # placement:
+      #  constraints:
+      #    - node.role == manager
+    entrypoint:
+        ["wait-for-it", "-t", "120", "db:3306", "--", "/usr/local/bin/firstrun.sh"]
+    depends_on:
+      - mariadb
+    volumes:
+     - /shared/drupal/modules:/var/www/html/modules 
+     - /shared/drupal/profiles:/var/www/html/profiles
+     - /shared/drupal/themes:/var/www/html/themes
+     - /shared/drupal/sites:/var/www/html/sites
+    networks:
+      - intnet
+
+  mariadb:
+    hostname: mariadb  
+    image: 127.0.0.1:5000/mariadb
+    restart: always
+    logging:
+      driver: gelf
+      options:
+        gelf-address: "udp://0.0.0.0:12201"
+        tag: db_logs
+    ports:
+     - 3306:3306
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == worker
+    environment:
+      MYSQL_ROOT_PASSWORD: drupal
+      MYSQL_DATABASE: drupal
+      MYSQL_USER: drupal
+      MYSQL_PASSWORD: drupal
+    networks:
+     - intnet
+  
+  pmy:
+    image: 127.0.0.1:5000/phpmyadmin
+    hostname: pmy
+    environment:
+     - PMA_HOST=mariadb
+    logging:
+      driver: gelf
+      options:
+        gelf-address: "udp://0.0.0.0:12201"
+        tag: pmy_logs
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+         - node.role == worker
+      labels:
+       - "traefik.enable=true"
+       - "traefik.http.routers.pmy.rule=Host(`pmy.localdomain`)"
+       - "traefik.http.routers.pmy.entrypoints=websecure"
+       - "traefik.http.services.pmy.loadbalancer.server.port=80"
+       
+       - "traefik.http.routers.pmy-http.middlewares=pmy-https"
+       - "traefik.http.middlewares.pmy-https.redirectscheme.scheme=https"
+
+       - "traefik.http.routers.pmy.tls=true"
+       - "traefik.http.services.pmy.loadBalancer.sticky.cookie=true"
+       - "traefik.http.services.pmy.loadBalancer.sticky.cookie.name=pmy_cookie_sticky"
+    depends_on:
+     - mariadb
+    networks:
+     - intnet
+
+
+  revproxy:
+    image: 127.0.0.1:5000/traefik
+    hostname: revproxy
+    logging:
+      driver: gelf
+      options:
+        gelf-address: "udp://0.0.0.0:12201"
+        tag: traefik_logs
+    image: 127.0.0.1:5000/traefik
+    command:
+      - --providers.docker.swarmMode=true
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+    ports:
+      - 80:80
+      - 443:443
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      - drupal
+    networks:
+      - extnet
+      - intnet
+    deploy:
+      placement:
+        constraints:
+          - node.role == manager
+      labels:
+        traefik.enable: "true"
+        traefik.http.services.traefik.loadbalancer.server.port: 80
+
+  waf:
+    image: 127.0.0.1:5000/waf
+    logging:
+      driver: gelf
+      options:
+        gelf-address: "udp://0.0.0.0:12201"
+        tag: waf_logs
+    environment:
+      UPSTREAM: http://cms
+      UPSTREAM: http://pmy
+    volumes:
+      - /shared/logs:/var/log/modsec 
+    deploy:
+      placement:
+        constraints:
+          - node.role == manager
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.drupal.rule=Host(`cms.localdomain`)"
+        - "traefik.http.routers.drupal.entrypoints=websecure"
+        - "traefik.http.routers.drupal.tls=true"
+       
+        - "traefik.http.routers.cms-http.middlewares=cms-https"
+        - "traefik.http.middlewares.cms-https.redirectscheme.scheme=https"
+
+        - "traefik.http.services.drupal.loadBalancer.sticky.cookie=true"
+        - "traefik.http.services.drupal.loadBalancer.sticky.cookie.name=cms_cookie_sticky"
+        - "traefik.http.services.drupal.loadbalancer.server.port=80"
+    networks:
+      - intnet
+
+  kibana:
+    image: 127.0.0.1:5000/kibana
+    environment:
+     - KIBANA_ELASTICSEARCH_URL=elasticsearch
+     - KIBANA_WAIT_READY_MAX_RETRIES=200
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+         - node.role == manager
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.kibana.rule=Host(`kibana.localdomain`)"
+        - "traefik.http.routers.kibana.entrypoints=websecure"
+        - "traefik.http.services.kibana.loadbalancer.server.port=5601"
+      
+        - "traefik.http.routers.kibana-http.middlewares=kibana-https"
+        - "traefik.http.middlewares.kibana-https.redirectscheme.scheme=https"
+      
+        - "traefik.http.routers.kibana.tls=true"
+        - "traefik.http.services.kibana.loadBalancer.sticky.cookie=true"
+        - "traefik.http.services.kibana.loadBalancer.sticky.cookie.name=kibana_cookie_sticky"
+    networks:
+     -  intnet
+    depends_on:
+     - elk
+
+  elk:
+    image: 127.0.0.1:5000/elasticsearch
+    hostname: elasticsearch
+    ports:
+      - 9200:9200
+    environment:
+      - discovery.type=single-node
+      - ES_JAVA_OPTS=-Xms2g -Xmx2g
+    deploy:
+      placement:
+        constraints:
+         - node.hostname == vm2
+    networks:
+     - intnet
+
+  logstash:
+    image: 127.0.0.1:5000/logstash
+    hostname: logstash
+    ports:
+      - "12201:12201/udp"
+    deploy:
+      mode: global
+    environment:
+     - LOGSTASH_CONF_FILENAME=modsec_config.conf
+    volumes:
+     - /shared/logstash-pipeline:/usr/share/logstash/pipeline/
+     - /shared/logs:/log
+    networks:
+     - intnet
+    depends_on:
+     - elk
+     - waf
+
+networks:
+ intnet:
+  driver: overlay
+  ipam:
+   driver: default
+   config:
+    - subnet: 192.168.200.0/24
+ extnet:
+  driver: overlay
+  ipam:
+   driver: default
+   config:
+    - subnet: 192.168.100.0/24
